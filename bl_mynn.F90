@@ -1,5 +1,6 @@
 !=================================================================================================================
  module bl_mynn
+ use mpas_log
  use ccpp_kind_types,only: kind_phys
 
  use bl_mynn_common,only: &
@@ -154,21 +155,22 @@
              bl_mynn_edmf      , bl_mynn_edmf_dd    , bl_mynn_edmf_mom   , &
              bl_mynn_edmf_tke  , bl_mynn_mixscalars , bl_mynn_output     , &
              bl_mynn_cloudmix  , bl_mynn_mixqt      , bl_mynn_scaleaware , &
-             bl_mynn_dheatopt  , edmf_a             , edmf_w             , &
-             edmf_qt           , edmf_thl           , edmf_ent           , &
-             edmf_qc           , sub_thl            , sub_sqv            , &
-             det_thl           , det_sqv            , edmf_a_dd          , &
-             edmf_w_dd         , edmf_qt_dd         , edmf_thl_dd        , &
-             edmf_ent_dd       , edmf_qc_dd         , maxwidth           , &
-             maxmf             , ztop_plume         , ktop_plume         , &
-             spp_pbl           , pattern_spp_pbl    , rthraten           , &
-             flag_qc           , flag_qi            , flag_qs            , &
-             flag_qnc          , flag_qni           , flag_qnwfa         , &
-             flag_qnifa        , flag_qnbca         , flag_qoz           , &
-#if(WRF_CHEM == 1)
-             mix_chem          , nchem              , kdvel              , &
-             ndvel             , chem               , emis_ant_no        , &
-             frp               , vdep               ,                      &
+             bl_mynn_dheatopt  , bl_mynn_mixchems   , edmf_a             , &
+             edmf_w            , edmf_qt            , edmf_thl           , &
+             edmf_ent          , edmf_qc            , sub_thl            , &
+             sub_sqv           , det_thl            , det_sqv            , &
+             edmf_a_dd         , edmf_w_dd          , edmf_qt_dd         , &
+             edmf_thl_dd       , edmf_ent_dd        , edmf_qc_dd         , &
+             maxwidth          , maxmf              , ztop_plume         , &
+             ktop_plume        , spp_pbl            , pattern_spp_pbl    , &
+             rthraten          , flag_qc            , flag_qi            , &
+             flag_qs           , flag_qnc           , flag_qni           , &
+             flag_qnwfa        , flag_qnifa         , flag_qnbca         , &
+             flag_qoz          ,                                           &
+#ifdef DO_GOCART2G
+             nchem             , kdvel              , ndvel              , &
+             chem              , vdep               , emis_ant_no        , &
+             frp               , rchemblten         ,                      &
 #endif
              its, ite , kts , kte , kme , errmsg , errflg                  &
             )    
@@ -183,6 +185,7 @@
  logical,intent(in):: bl_mynn_mixscalars,bl_mynn_cloudmix,bl_mynn_mixqt
  logical,intent(in):: bl_mynn_tkeadvect,bl_mynn_tkebudget
  logical,intent(in):: bl_mynn_output,bl_mynn_dheatopt,bl_mynn_scaleaware,bl_mynn_topdown
+ logical,intent(in):: bl_mynn_mixchems
 
  logical,intent(in):: &
     restart,cycling
@@ -402,15 +405,15 @@
 
 
 !VARIABLES NEEDED FOR MIXING OF CHEMICAL SPECIES:
-#if(WRF_CHEM == 1)
+#ifdef DO_GOCART2G
 !--- inputs:
- logical,intent(in):: mix_chem
  integer,intent(in):: nchem,kdvel,ndvel
  real(kind=kind_phys),intent(in),dimension(its:ite),optional:: frp,emis_ant_no
  real(kind=kind_phys),intent(in),dimension(its:ite,ndvel):: vdep
+ real(kind=kind_phys),intent(in),dimension(its:ite,kts:kte,nchem):: chem
 
 !--- inouts:
- real(kind=kind_phys),intent(inout),dimension(its:ite,kts:kte,nchem):: chem
+ real(kind=kind_phys),intent(inout),dimension(its:ite,kts:kte,nchem):: rchemblten
 #else
  logical,parameter:: mix_chem = .false.
  integer,parameter:: nchem = 1
@@ -427,7 +430,10 @@
  real(kind=kind_phys),dimension(ndvel):: vd1
  real(kind=kind_phys),dimension(kts:kte,nchem)::   chem1
  real(kind=kind_phys),dimension(kts:kte+1,nchem):: s_awchem1          
+ real(kind=kind_phys),dimension(kts:kte,nchem):: dchem1
  !END VARIABLES NEEDED FOR MIXING OF CHEMICAL SPECIES.
+
+ real(kind=kind_phys),dimension(kts:kte,nchem):: chem0
 
 !-----------------------------------------------------------------------------------------------------------------
 
@@ -645,11 +651,12 @@
     enddo
 
 !INITIALIZATION OF LOCAL CHEMICAL SPECIES:
-#if(WRF_CHEM == 1)
+#ifdef DO_GOCART2G
     do ic = 1,nchem
        vd1(ic) = vdep(i,ic)
        do k = kts,kte
           chem1(k,ic) = chem(i,k,ic)
+          chem0(k,ic) = chem(i,k,ic)
        enddo
     enddo
     if(present(emis_ant_no) .and. present(frp)) then
@@ -671,9 +678,12 @@
     frp1 = 0._kind_phys
 #endif
     do ic = 1,nchem
-       do k = kts,kte+1
+       do k = kts,kte
+          dchem1(k,ic) = 0._kind_phys
           s_awchem1(k,ic) = 0._kind_phys
        enddo
+       k = kte+1
+       s_awchem1(k,ic) = 0._kind_phys
     enddo
 !END INITIALIZATION OF LOCAL CHEMICAL SPECIES.
 
@@ -905,7 +915,7 @@
                 det_u,det_v,                       &
                 !chem/smoke mixing
                 nchem,chem1,s_awchem1,             &
-                mix_chem,                          &
+                bl_mynn_mixchems,                  &
                 qc_bl1,cldfra_bl1,                 &
                 qc_bl1_old,cldfra_bl1_old,         &
                 flag_qc,flag_qi,                   &
@@ -1028,7 +1038,7 @@
 
     !--- call to subroutine mynn_mix_chem for PBL and tropospheric mixing of
     !    chemical species:
-    if(mix_chem) then
+    if(bl_mynn_mixchems) then
        if(rrfs_sd) then
           call mynn_mix_chem(kts,kte,   &
                     delt,dz1,pblh1,     &
@@ -1040,7 +1050,8 @@
                     s_aw1,s_awchem1,    &
                     emis_ant_no1,       &
                     frp1,rrfs_sd,       &
-                    enh_mix,smoke_dbg)
+                    enh_mix,smoke_dbg,  &
+                    dchem1)
        else
           call mynn_mix_chem(kts,kte,   &
                     delt,dz1,pblh1,     &
@@ -1052,16 +1063,24 @@
                     s_aw1,s_awchem1,    &
                     zero,               &
                     zero,rrfs_sd,       &
-                    enh_mix,smoke_dbg)
+                    enh_mix,smoke_dbg,  &
+                    dchem1)
        endif
-    endif
-#if(WRF == 1)
-    !directly updates chem3 instead of computing a tendency:
-    do ic = 1,nchem
-       do k = kts,kte
-          chem(i,k,ic) = max(1.e-12,chem1(k,ic))
+#ifdef DO_GOCART2G
+       do ic = 1,nchem
+          do k = kts,kte
+             rchemblten(i,k,ic) = dchem1(k,ic)
+          enddo
        enddo
-    enddo
+#endif
+    endif
+#ifdef DO_GOCART2G
+    !directly updates chem3 instead of computing a tendency:
+    !do ic = 1,nchem
+    !  do k = kts,kte
+    !     chem(i,k,ic) = max(1.e-12,chem1(k,ic))
+    !  enddo
+    !enddo
 #endif
 
 

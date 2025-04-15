@@ -4192,20 +4192,21 @@ ENDIF
        dfh,                               &
        s_aw, s_awchem,                    &
        emis_ant_no, frp, rrfs_sd,         &
-       enh_mix, smoke_dbg                 )
+       enh_mix, smoke_dbg, dchem          )
 
 !-------------------------------------------------------------------
     integer, intent(in) :: kts,kte
     real(kind_phys), dimension(kts:kte), intent(in)    :: dfh,dz,tcd,qcd
-    real(kind_phys), dimension(kts:kte), intent(inout) :: rho
+    real(kind_phys), dimension(kts:kte), intent(in)    :: rho
     real(kind_phys), intent(in)    :: flt
     real(kind_phys), intent(in)    :: delt,pblh
     integer, intent(in) :: nchem, kdvel, ndvel
     real(kind_phys), dimension( kts:kte+1), intent(in) :: s_aw
-    real(kind_phys), dimension( kts:kte, nchem ), intent(inout) :: chem1
+    real(kind_phys), dimension( kts:kte, nchem ), intent(in) :: chem1
     real(kind_phys), dimension( kts:kte+1,nchem), intent(in) :: s_awchem
     real(kind_phys), dimension( ndvel ), intent(in) :: vd1
     real(kind_phys), intent(in) :: emis_ant_no,frp
+    real(kind_phys), dimension( kts:kte, nchem), intent(inout) :: dchem
     logical, intent(in) :: rrfs_sd,enh_mix,smoke_dbg
 !local vars
 
@@ -4305,7 +4306,9 @@ ENDIF
        CALL tridiag3(kte,a,b,c,d,x)
 
        DO k=kts,kte
-          chem1(k,ic)=x(k)
+!--- returns tendency:
+!         chem1(k,ic)=x(k)
+          dchem(k,ic) = (x(k)-chem1(k,ic))/delt
        ENDDO
     ENDDO
 
