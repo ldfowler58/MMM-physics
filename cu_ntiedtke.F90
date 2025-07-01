@@ -1,7 +1,6 @@
 !=================================================================================================================
  module cu_ntiedtke_common
  use ccpp_kind_types,only: kind_phys
- use mpas_log
 
 
  implicit none
