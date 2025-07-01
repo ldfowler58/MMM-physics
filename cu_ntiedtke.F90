@@ -1,6 +1,7 @@
 !=================================================================================================================
  module cu_ntiedtke_common
  use ccpp_kind_types,only: kind_phys
+ use mpas_log
 
 
  implicit none
@@ -145,8 +146,9 @@
 !!\html\include cu_ntiedtke_run.html
 !!
 !     level 1 subroutine 'cu_ntiedkte_run'
-      subroutine cu_ntiedtke_run(pu,pv,pt,pqv,pqc,pqi,pqvf,ptf,poz,pzz,pomg, &
-     &         pap,paph,evap,hfx,zprecc,lndj,lq,km,km1,dt,dx,errmsg,errflg)
+      subroutine cu_ntiedtke_run(pu,pv,pt,pqv,pqc,pqi,pqvf,ptf,poz,pzz,pomg,pap,paph,evap,hfx, &
+                            zprecc,lndj,lq,km,km1,dt,dx,ldcum,lddraf,kctype,kcbot,kctop,kdtop, &
+                            pmfu,pmfd,pmfu_detr,pmfd_detr,pmfu_entr,pmfd_entr,errmsg,errflg)
 !=================================================================================================================
 !     this is the interface between the model and the mass flux convection module
 !     m.tiedtke      e.c.m.w.f.      1989
@@ -204,10 +206,16 @@
       character(len=*),intent(out):: errmsg
       integer,intent(out):: errflg
 
+      logical,intent(out),dimension(:),optional:: ldcum,lddraf
+      integer,intent(out),dimension(:),optional:: kctype,kcbot,kctop,kdtop
+      real(kind=kind_phys),intent(out),dimension(:,:),optional:: pmfu,pmfd
+      real(kind=kind_phys),intent(out),dimension(:,:),optional:: pmfu_detr,pmfd_detr
+      real(kind=kind_phys),intent(out),dimension(:,:),optional:: pmfu_entr,pmfd_entr
+
 !--- local variables and arrays:
-      logical,dimension(lq):: locum
+      logical,dimension(lq):: locum,loddraf
       integer:: i,j,k
-      integer,dimension(lq):: icbot,ictop,ktype
+      integer,dimension(lq):: icbot,ictop,idtop,ktype
 
       real(kind=kind_phys):: ztmst,fliq,fice,ztc,zalf,tt
       real(kind=kind_phys):: ztpp1,zew,zqs,zcor
@@ -219,6 +227,7 @@
       real(kind=kind_phys),dimension(lq,km):: pum1,pvm1,ztt,ptte,pqte,pvom,pvol,pverv,pgeo
       real(kind=kind_phys),dimension(lq,km):: zqq,pcte
       real(kind=kind_phys),dimension(lq,km):: ztp1,zqp1,ztu,zqu,zlu,zlude,zmfu,zmfd,zqsat
+      real(kind=kind_phys),dimension(lq,km):: zmfude_rate,zmfdde_rate,zmfuen_rate,zmfden_rate
       real(kind=kind_phys),dimension(lq,km1):: pgeoh
 
 !-----------------------------------------------------------------------------------------------------------------
@@ -243,6 +252,7 @@
       do j=1,lq
         zrain(j)=0.0
         locum(j)=.false.
+        loddraf(j)=.false.
         prsfc(j)=0.0
         pssfc(j)=0.0
         pqhfl(j)=evap(j)
@@ -281,18 +291,20 @@
 !*    2.     call 'cumastrn'(master-routine for cumulus parameterization)
 !
       call cumastrn        &
-     &    (lq,       km,       km1,      km-1,    ztp1,  &
-     &     zqp1,     pum1,     pvm1,     pverv,   zqsat, &
-     &     pqhfl,    ztmst,    pap,      paph,    pgeo,  &
-     &     ptte,     pqte,     pvom,     pvol,    prsfc, &
-     &     pssfc,    locum,                              &
-     &     ktype,    icbot,    ictop,    ztu,     zqu,   &
-     &     zlu,      zlude,    zmfu,     zmfd,    zrain, &
-     &     pcte,     phhfl,    lndj,     pgeoh,   dx,    &
-     &     scale_fac, scale_fac2)
+     &    (lq,    km,        km1,        km-1,        ztp1,  &
+     &     zqp1,  pum1,      pvm1,       pverv,       zqsat, &
+     &     pqhfl, ztmst,     pap,        paph,        pgeo,  &
+     &     ptte,  pqte,      pvom,       pvol,        prsfc, &
+     &     pssfc, locum,     loddraf,                        &
+     &     ktype, icbot,     ictop,      idtop,       ztu,   &
+     &     zqu,   zlu,       zlude,      zmfu,        zmfd,  &
+     &     zrain, pcte,      phhfl,      lndj,        pgeoh, &
+     &     dx,    scale_fac, scale_fac2, zmfude_rate, zmfdde_rate, &
+     &     zmfuen_rate, zmfden_rate)
 !
 !     to include the cloud water and cloud ice detrained from convection
 !
+
       do k=1,km
       do j=1,lq
       if(pcte(j,k).gt.0.) then
@@ -328,6 +340,49 @@
       errmsg = 'cu_ntiedtke_run OK'
       errflg = 0
 !
+      if(present(ldcum)) then
+         do j = 1,lq
+            ldcum(j) = locum(j)
+         enddo
+         if(present(kctype) .and. present(kcbot) .and. present(kctop) .and. present(kdtop)) then
+            do j = 1,lq
+               kctype(j) = ktype(j)
+               kcbot(j)  = icbot(j)
+               kctop(j)  = ictop(j)
+            enddo
+         endif
+         if(present(lddraf) .and. present(kdtop)) then
+            do j = 1,lq
+               lddraf(j) = loddraf(j)
+               kdtop(j)  = idtop(j)
+            enddo
+         endif
+         if(present(pmfu) .and. present(pmfd)) then
+            do k = 1,km
+               do j = 1,lq
+                  pmfu(j,k) = zmfu(j,k)
+                  pmfd(j,k) = zmfd(j,k)
+               enddo
+            enddo
+         endif
+         if(present(pmfu_entr) .and. present(pmfd_entr)) then
+            do k = 1,km
+               do j = 1,lq
+                  pmfu_entr(j,k) = zmfuen_rate(j,k)
+                  pmfd_entr(j,k) = zmfden_rate(j,k)
+               enddo
+            enddo
+         endif
+         if(present(pmfu_detr) .and. present(pmfd_detr)) then
+            do k = 1,km
+               do j = 1,lq
+                  pmfu_detr(j,k) = zmfude_rate(j,k)
+                  pmfd_detr(j,k) = zmfdde_rate(j,k)
+               enddo
+            enddo
+         endif
+      endif
+
       return
       end subroutine cu_ntiedtke_run
 
@@ -340,15 +395,15 @@
 !           subroutine cumastrn
 !***********************************************************
       subroutine cumastrn  &
-     &    (klon,     klev,     klevp1,   klevm1,   pten,  &
-     &     pqen,     puen,     pven,     pverv,    pqsen, &
-     &     pqhfl,    ztmst,    pap,      paph,     pgeo,  &
-     &     ptte,     pqte,     pvom,     pvol,     prsfc, &
-     &     pssfc,    ldcum,                               &
-     &     ktype,    kcbot,    kctop,    ptu,      pqu,   &
-     &     plu,      plude,    pmfu,     pmfd,     prain, &
-     &     pcte,     phhfl,    lndj,     zgeoh,    dx,    &
-     &     scale_fac,  scale_fac2)
+     &    (klon,       klev,        klevp1,      klevm1,      pten,        &
+     &     pqen,       puen,        pven,        pverv,       pqsen,       &
+     &     pqhfl,      ztmst,       pap,         paph,        pgeo,        &
+     &     ptte,       pqte,        pvom,        pvol,        prsfc,       &
+     &     pssfc,      ldcum,       loddraf,     ktype,       kcbot,       &
+     &     kctop,      idtop,       ptu,         pqu,         plu,         &
+     &     plude,      pmfu,        pmfd,        prain,       pcte,        &
+     &     phhfl,      lndj,        zgeoh,       dx,          scale_fac,   &
+     &     scale_fac2, pmfude_rate, pmfdde_rate, pmfuen_rate, pmfden_rate)
       implicit none
 !
 !***cumastrn*  master routine for cumulus massflux-scheme
@@ -422,21 +477,23 @@
       real(kind=kind_phys),intent(in),dimension(klon,klevp1):: paph,zgeoh
 
 !--- inout arguments:
-      integer,intent(inout),dimension(klon):: ktype,kcbot,kctop
-      logical,intent(inout),dimension(klon):: ldcum
+      integer,intent(inout),dimension(klon):: ktype,kcbot,kctop,idtop
+      logical,intent(inout),dimension(klon):: ldcum,loddraf
 
       real(kind=kind_phys),intent(inout),dimension(klon):: pqsen
       real(kind=kind_phys),intent(inout),dimension(klon):: prsfc,pssfc,prain
       real(kind=kind_phys),intent(inout),dimension(klon,klev):: pcte,ptte,pqte,pvom,pvol
       real(kind=kind_phys),intent(inout),dimension(klon,klev):: ptu,pqu,plu,plude,pmfu,pmfd
+      real(kind=kind_phys),intent(inout),dimension(klon,klev):: pmfude_rate,pmfdde_rate
+      real(kind=kind_phys),intent(inout),dimension(klon,klev):: pmfuen_rate,pmfden_rate
 
 !--- local variables and arrays:
       logical:: llo1
-      logical,dimension(klon):: loddraf,llo2
+      logical,dimension(klon):: llo2
 
       integer:: jl,jk,ik
       integer:: ikb,ikt,icum,itopm2
-      integer,dimension(klon):: kdpl,idtop,ictop0,ilwmin
+      integer,dimension(klon):: kdpl,ictop0,ilwmin
       integer,dimension(klon,klev):: ilab
 
       real(kind=kind_phys):: zcons,zcons2,zqumqe,zdqmin,zdh,zmfmax
@@ -454,7 +511,6 @@
       real(kind=kind_phys),dimension(klon):: zmfuvb,zsum12,zsum22
       real(kind=kind_phys),dimension(klon):: zrfl
       real(kind=kind_phys),dimension(klev):: pmean
-      real(kind=kind_phys),dimension(klon,klev):: pmfude_rate,pmfdde_rate
       real(kind=kind_phys),dimension(klon,klev):: zdpmel
       real(kind=kind_phys),dimension(klon,klev):: zmfuus,zmfdus,zuv2,ztenu,ztenv
       real(kind=kind_phys),dimension(klon,klev):: ztenh,zqenh,zqsenh,ztd,zqd
@@ -465,6 +521,7 @@
 !-------------------------------------------
 !     1.    specify constants and parameters
 !-------------------------------------------
+
       zcons=1./(g*ztmst)
       zcons2=3./(g*ztmst)
 
@@ -603,6 +660,7 @@
      &     ztd,      zqd,      zud,    zvd,    &
      &     pmfd,     zmfds,    zmfdq,  zdmfdp, &
      &     idtop,    loddraf)
+
 !*     (b)  determine downdraft t,q and fluxes in 'cuddrafn'
 !------------------------------------------------------------
         call cuddrafn &
@@ -816,6 +874,7 @@
         end if
       end do
     end do
+
 !----------------------------------------------------------
 !*    7.0      determine final convective fluxes in 'cuflx'
 !----------------------------------------------------------
@@ -1081,6 +1140,28 @@
       end do
     end if
 
+!----------------------------------------------------------------------
+!*   12.0          ADDITIONAL OUTPUT DIAGNOSTICS:
+! -------------------------
+    do jl = 1,klon
+       do jk = 1,klev
+          pmfuen_rate(jl,jk) = 0.
+          pmfden_rate(jl,jk) = 0.
+       enddo
+       if(ldcum(jl)) then
+          ikb = kcbot(jl)
+          do jk = ikb-1,1,-1
+             pmfuen_rate(jl,jk) = -(pmfu(jl,jk+1)-pmfu(jl,jk)) + pmfude_rate(jl,jk)
+          enddo
+          if(loddraf(jl)) then
+             ikb = idtop(jl)
+             do jk = ikb+1,klev
+                pmfden_rate(jl,jk) = -(pmfd(jl,jk-1)-pmfd(jl,jk)) - pmfdde_rate(jl,jk)
+             enddo
+          endif
+       endif
+    enddo
+
       return
       end subroutine cumastrn
 
@@ -1212,6 +1293,7 @@
       klab(jl,jk)=0
       end do
       end do
+
       return
       end subroutine cuinin
 
@@ -3131,6 +3213,7 @@
         end do
       end if
     end do
+
   !---------------------------------------------------------------
   !*  3.0          UPDATE TENDENCIES
   !   -----------------
