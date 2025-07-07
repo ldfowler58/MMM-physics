@@ -160,6 +160,11 @@
                 zmfudr,zmfddr,chem,ptenc)
 
 
+!--- output error flag and message:
+ errflg = 0
+ errmsg = " "
+
+
  end subroutine cu_ntiedtke_ctrans_run
 
 !==================================================================================================================
